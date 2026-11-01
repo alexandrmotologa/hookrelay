@@ -44,29 +44,31 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <nav className="flex items-center space-x-1 sm:space-x-1.5 overflow-x-auto">
+          <nav className="flex items-center space-x-1 sm:space-x-1.5 overflow-x-auto no-scrollbar py-1">
             <button
               onClick={() => setActiveTab('deliveries')}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
+              title="Deliveries"
+              className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'deliveries'
                   ? 'bg-neutral-800 text-white border border-neutral-700'
                   : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
               }`}
             >
               <Layers className="w-4 h-4" />
-              <span>Deliveries</span>
+              <span className="hidden lg:inline">Deliveries</span>
             </button>
 
             <button
               onClick={() => setActiveTab('endpoints')}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
+              title="Endpoints"
+              className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'endpoints'
                   ? 'bg-neutral-800 text-white border border-neutral-700'
                   : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
               }`}
             >
               <Shield className="w-4 h-4" />
-              <span>Endpoints</span>
+              <span className="hidden lg:inline">Endpoints</span>
               {stats && stats.suspended_endpoints > 0 && (
                 <span className="bg-rose-500/20 text-rose-400 text-[10px] font-bold px-1.5 py-0.2 rounded-full border border-rose-500/30">
                   {stats.suspended_endpoints}
@@ -76,14 +78,15 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => setActiveTab('dlq')}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
+              title="Dead Letter Queue"
+              className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'dlq'
                   ? 'bg-neutral-800 text-white border border-neutral-700'
                   : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
               }`}
             >
               <AlertTriangle className="w-4 h-4" />
-              <span>Dead Letter</span>
+              <span className="hidden lg:inline">Dead Letter</span>
               {stats && stats.failed_count > 0 && (
                 <span className="bg-amber-500/20 text-amber-400 text-[10px] font-bold px-1.5 py-0.2 rounded-full border border-amber-500/30">
                   {stats.failed_count}
@@ -93,38 +96,41 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => setActiveTab('mock')}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
+              title="Mock Receiver"
+              className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'mock'
                   ? 'bg-neutral-800 text-white border border-neutral-700'
                   : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
               }`}
             >
               <Radio className="w-4 h-4 text-cyan-400" />
-              <span>Mock Receiver</span>
+              <span className="hidden lg:inline">Mock Receiver</span>
             </button>
 
             <button
               onClick={() => setActiveTab('debugger')}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
+              title="Signature Debugger"
+              className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'debugger'
                   ? 'bg-neutral-800 text-white border border-neutral-700'
                   : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
               }`}
             >
               <Terminal className="w-4 h-4 text-emerald-400" />
-              <span>Signature Debugger</span>
+              <span className="hidden lg:inline">Signature Debugger</span>
             </button>
 
             <button
               onClick={() => setActiveTab('portal')}
-              className={`px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
+              title="Customer Portal"
+              className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'portal'
                   ? 'bg-neutral-800 text-white border border-neutral-700'
                   : 'text-neutral-400 hover:text-white hover:bg-neutral-800/50'
               }`}
             >
               <Sparkles className="w-4 h-4 text-amber-400" />
-              <span>Customer Portal</span>
+              <span className="hidden lg:inline">Customer Portal</span>
             </button>
           </nav>
 
