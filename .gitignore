@@ -1,7 +1,7 @@
-# Binaries
-hookrelay
-hookrelay.exe
-*.exe
+# Root Binaries
+/hookrelay
+/hookrelay.exe
+*.exe~
 *.dll
 *.so
 *.dylib
@@ -16,8 +16,7 @@ hookrelay.exe
 # Node & Frontend
 node_modules/
 web/node_modules/
-web/dist/
-dist/
+/web/dist/
 .vite/
 
 # OS files
