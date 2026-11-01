@@ -1,0 +1,29 @@
+# Binaries
+hookrelay
+hookrelay.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Node & Frontend
+node_modules/
+web/node_modules/
+web/dist/
+dist/
+.vite/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage & logs
+coverage/
+*.log
