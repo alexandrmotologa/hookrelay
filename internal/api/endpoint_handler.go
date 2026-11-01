@@ -28,19 +28,21 @@ func NewEndpointHandler(store storage.Storage, engine *queue.Engine, allowPrivat
 }
 
 type CreateEndpointRequest struct {
-	Name       string   `json:"name"`
-	URL        string   `json:"url"`
-	Secret     string   `json:"secret,omitempty"`
-	EventTypes []string `json:"event_types,omitempty"`
-	RateLimit  int      `json:"rate_limit,omitempty"`
+	Name          string            `json:"name"`
+	URL           string            `json:"url"`
+	Secret        string            `json:"secret,omitempty"`
+	EventTypes    []string          `json:"event_types,omitempty"`
+	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
+	RateLimit     int               `json:"rate_limit,omitempty"`
 }
 
 type UpdateEndpointRequest struct {
-	Name       string                 `json:"name"`
-	URL        string                 `json:"url"`
-	EventTypes []string               `json:"event_types,omitempty"`
-	RateLimit  int                    `json:"rate_limit,omitempty"`
-	Status     storage.EndpointStatus `json:"status,omitempty"`
+	Name          string                 `json:"name"`
+	URL           string                 `json:"url"`
+	EventTypes    []string               `json:"event_types,omitempty"`
+	CustomHeaders map[string]string      `json:"custom_headers,omitempty"`
+	RateLimit     int                    `json:"rate_limit,omitempty"`
+	Status        storage.EndpointStatus `json:"status,omitempty"`
 }
 
 func (h *EndpointHandler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +75,6 @@ func (h *EndpointHandler) CreateEndpoint(w http.ResponseWriter, r *http.Request)
 		req.Name = "Endpoint " + req.URL
 	}
 
-	// Validate destination URL with SSRF protection
 	if _, err := dispatcher.ValidateURL(req.URL, h.allowPrivateIPs); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid webhook URL: %v", err))
 		return
@@ -90,12 +91,13 @@ func (h *EndpointHandler) CreateEndpoint(w http.ResponseWriter, r *http.Request)
 	}
 
 	ep := &storage.Endpoint{
-		Name:       req.Name,
-		URL:        req.URL,
-		Secret:     secret,
-		EventTypes: req.EventTypes,
-		RateLimit:  req.RateLimit,
-		Status:     storage.EndpointStatusActive,
+		Name:          req.Name,
+		URL:           req.URL,
+		Secret:        secret,
+		EventTypes:    req.EventTypes,
+		CustomHeaders: req.CustomHeaders,
+		RateLimit:     req.RateLimit,
+		Status:        storage.EndpointStatusActive,
 	}
 
 	if err := h.store.CreateEndpoint(ctx, ep); err != nil {
@@ -147,6 +149,9 @@ func (h *EndpointHandler) UpdateEndpoint(w http.ResponseWriter, r *http.Request)
 	if req.EventTypes != nil {
 		ep.EventTypes = req.EventTypes
 	}
+	if req.CustomHeaders != nil {
+		ep.CustomHeaders = req.CustomHeaders
+	}
 	if req.RateLimit > 0 {
 		ep.RateLimit = req.RateLimit
 	}
@@ -187,15 +192,23 @@ func (h *EndpointHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Preserve old secret as previous_secret for 24h dual signing grace period
+	now := time.Now().UTC()
+	ep.PreviousSecret = ep.Secret
+	ep.SecretRotatedAt = &now
 	ep.Secret = newSecret
+
 	if err := h.store.UpdateEndpoint(ctx, ep); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save rotated secret")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"endpoint_id": ep.ID,
-		"secret":      ep.Secret,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"endpoint_id":       ep.ID,
+		"secret":            ep.Secret,
+		"previous_secret":   ep.PreviousSecret,
+		"secret_rotated_at": ep.SecretRotatedAt,
+		"grace_period":      "24h",
 	})
 }
 
@@ -224,7 +237,6 @@ func (h *EndpointHandler) TestPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create test message
 	msg := &storage.Message{
 		EventType: "ping",
 		Payload:   fmt.Sprintf(`{"type":"ping","timestamp":"%s","message":"HookRelay test verification ping"}`, time.Now().UTC().Format(time.RFC3339)),
@@ -235,7 +247,6 @@ func (h *EndpointHandler) TestPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create delivery
 	del := &storage.Delivery{
 		MessageID:   msg.ID,
 		EndpointID:  ep.ID,
@@ -248,7 +259,6 @@ func (h *EndpointHandler) TestPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute synchronously for immediate feedback in the UI
 	h.engine.ProcessDelivery(ctx, del.ID)
 
 	updated, _ := h.store.GetDeliveryWithDetails(ctx, del.ID)

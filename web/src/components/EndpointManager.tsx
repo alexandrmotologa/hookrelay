@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Endpoint, EndpointStatus } from '../types';
-import { Plus, Shield, Globe, Key, RotateCw, Trash2, Check, Copy, ExternalLink, Zap, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Plus, Shield, Globe, Key, RotateCw, Trash2, Check, Copy, ExternalLink, Zap, AlertTriangle, Eye, EyeOff, Sliders } from 'lucide-react';
 
 interface EndpointManagerProps {
   endpoints: Endpoint[];
@@ -13,6 +13,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
   const [url, setUrl] = useState('');
   const [eventTypesStr, setEventTypesStr] = useState('payment.*, invoice.paid');
   const [secret, setSecret] = useState('');
+  const [customHeadersStr, setCustomHeadersStr] = useState('{\n  "Authorization": "Bearer secret_token_xyz"\n}');
   const [rateLimit, setRateLimit] = useState(100);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +43,17 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
       .map((s) => s.trim())
       .filter(Boolean);
 
+    let customHeaders: Record<string, string> = {};
+    if (customHeadersStr.trim()) {
+      try {
+        customHeaders = JSON.parse(customHeadersStr);
+      } catch (err: any) {
+        setError(`Invalid Custom Headers JSON: ${err.message}`);
+        setSubmitting(false);
+        return;
+      }
+    }
+
     try {
       const res = await fetch('/api/v1/endpoints', {
         method: 'POST',
@@ -51,6 +63,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
           url,
           secret: secret || undefined,
           event_types: eventTypes,
+          custom_headers: customHeaders,
           rate_limit: Number(rateLimit),
         }),
       });
@@ -113,7 +126,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
   };
 
   const handleRotateSecret = async (id: string) => {
-    if (!confirm('Rotate secret key? The old secret will stop verifying immediately.')) return;
+    if (!confirm('Rotate secret key? A 24-hour dual-secret grace period will be activated automatically to prevent delivery loss.')) return;
     setActionLoading(`rotate-${id}`);
     try {
       await fetch(`/api/v1/endpoints/${id}/rotate-secret`, { method: 'POST' });
@@ -177,7 +190,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
             <span>Customer Destination Endpoints</span>
           </h2>
           <p className="text-xs text-neutral-400 mt-0.5">
-            Registered webhook listeners. Each endpoint features its own HMAC-SHA256 secret and circuit breaker.
+            Registered webhook listeners. Each endpoint features its own HMAC-SHA256 secret, dual-secret grace rotation, custom headers, and circuit breaker.
           </p>
         </div>
 
@@ -275,10 +288,10 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
                 </div>
               </div>
 
-              {/* Subscribed Events & Secret Key Strip */}
+              {/* Subscribed Events, Custom Headers & Secret Key Strip */}
               <div className="mt-4 pt-3 border-t border-neutral-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                {/* Event Tags */}
-                <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                {/* Event & Custom Header Tags */}
+                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                   <span className="text-neutral-500 text-[11px] font-semibold uppercase">Events:</span>
                   {ep.event_types && ep.event_types.length > 0 ? (
                     ep.event_types.map((ev) => (
@@ -290,7 +303,23 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
                       </span>
                     ))
                   ) : (
-                    <span className="text-neutral-500 font-mono text-[11px]">all events (*)</span>
+                    <span className="text-neutral-500 font-mono text-[11px]">all (*)</span>
+                  )}
+
+                  {ep.custom_headers && Object.keys(ep.custom_headers).length > 0 && (
+                    <div className="flex items-center space-x-1 ml-2">
+                      <Sliders className="w-3 h-3 text-neutral-500" />
+                      <span className="text-[11px] text-neutral-400 font-mono">
+                        {Object.keys(ep.custom_headers).length} Custom Header(s)
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Dual Secret Grace Period Badge */}
+                  {ep.previous_secret && ep.secret_rotated_at && (
+                    <span className="bg-cyan-500/10 text-cyan-400 font-mono text-[10px] px-2 py-0.5 rounded border border-cyan-500/20">
+                      Dual-Sign Active (24h Grace)
+                    </span>
                   )}
                 </div>
 
@@ -317,7 +346,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
                   <button
                     onClick={() => handleRotateSecret(ep.id)}
                     className="text-[11px] text-neutral-400 hover:text-amber-400 underline ml-1"
-                    title="Rotate secret key"
+                    title="Rotate secret key (with 24h dual signing grace)"
                   >
                     Rotate
                   </button>
@@ -371,7 +400,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
       {/* Add Endpoint Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
             <h3 className="text-base font-semibold text-white">Add Destination Endpoint</h3>
 
             {error && (
@@ -380,7 +409,7 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
               </div>
             )}
 
-            <form onSubmit={handleCreateEndpoint} className="space-y-3.5 text-xs">
+            <form onSubmit={handleCreateEndpoint} className="space-y-3 text-xs">
               <div>
                 <label className="block text-neutral-300 font-medium mb-1">Friendly Name</label>
                 <input
@@ -415,33 +444,47 @@ export const EndpointManager: React.FC<EndpointManagerProps> = ({ endpoints, onR
                   onChange={(e) => setEventTypesStr(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 font-mono focus:outline-none focus:border-neutral-700"
                 />
-                <p className="text-[11px] text-neutral-500 mt-1">Supports wildcards like payment.* or *</p>
               </div>
 
               <div>
-                <label className="block text-neutral-300 font-medium mb-1">Custom Secret (optional)</label>
-                <input
-                  type="text"
-                  placeholder="whsec_... (leave empty to auto-generate)"
-                  value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 font-mono focus:outline-none focus:border-neutral-700"
+                <label className="block text-neutral-300 font-medium mb-1">
+                  Custom HTTP Headers (JSON map, optional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder='{"Authorization": "Bearer token", "X-Custom-Header": "value"}'
+                  value={customHeadersStr}
+                  onChange={(e) => setCustomHeadersStr(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 font-mono text-neutral-200 text-xs focus:outline-none focus:border-neutral-700"
                 />
               </div>
 
-              <div>
-                <label className="block text-neutral-300 font-medium mb-1">Rate Limit (req/sec)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={rateLimit}
-                  onChange={(e) => setRateLimit(Number(e.target.value))}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 focus:outline-none focus:border-neutral-700"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-neutral-300 font-medium mb-1">Rate Limit (req/sec)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={rateLimit}
+                    onChange={(e) => setRateLimit(Number(e.target.value))}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 focus:outline-none focus:border-neutral-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-neutral-300 font-medium mb-1">Custom Secret (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="whsec_... (or auto)"
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 font-mono focus:outline-none focus:border-neutral-700"
+                  />
+                </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-3">
+              <div className="flex items-center justify-end space-x-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}

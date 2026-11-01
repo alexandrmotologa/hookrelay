@@ -16,6 +16,12 @@ func BuildRouter(store storage.Storage, engine *queue.Engine, allowPrivateIPs bo
 	endpointHandler := api.NewEndpointHandler(store, engine, allowPrivateIPs)
 	messageHandler := api.NewMessageHandler(store, engine)
 	portalHandler := api.NewPortalHandler(store, engine, portalSecret)
+	exportHandler := api.NewExportHandler(store)
+	mockReceiver := api.NewMockReceiver()
+	sseBroker := api.NewSSEBroker()
+
+	// Connect engine delivery events to SSE broker for real-time live streaming
+	engine.SubscribeDeliveryUpdates(sseBroker.BroadcastDelivery)
 
 	// Health Check
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +32,9 @@ func BuildRouter(store storage.Storage, engine *queue.Engine, allowPrivateIPs bo
 			"version": "1.0.0",
 		})
 	})
+
+	// Server-Sent Events (SSE) Live Delivery Stream
+	mux.HandleFunc("GET /api/v1/events/stream", sseBroker.HandleStream)
 
 	// Webhook Ingestion
 	mux.HandleFunc("POST /api/v1/publish", publishHandler.HandlePublish)
@@ -40,8 +49,9 @@ func BuildRouter(store storage.Storage, engine *queue.Engine, allowPrivateIPs bo
 	mux.HandleFunc("POST /api/v1/endpoints/{id}/reset-circuit-breaker", endpointHandler.ResetCircuitBreaker)
 	mux.HandleFunc("POST /api/v1/endpoints/{id}/test-ping", endpointHandler.TestPing)
 
-	// Deliveries, DLQ & Metrics
+	// Deliveries, DLQ, Metrics & Export
 	mux.HandleFunc("GET /api/v1/deliveries", messageHandler.ListDeliveries)
+	mux.HandleFunc("GET /api/v1/deliveries/export", exportHandler.HandleExport)
 	mux.HandleFunc("GET /api/v1/deliveries/{id}", messageHandler.GetDelivery)
 	mux.HandleFunc("POST /api/v1/deliveries/{id}/replay", messageHandler.ReplayDelivery)
 	mux.HandleFunc("POST /api/v1/deliveries/replay-dlq", messageHandler.ReplayDLQ)
@@ -52,6 +62,15 @@ func BuildRouter(store storage.Storage, engine *queue.Engine, allowPrivateIPs bo
 	mux.HandleFunc("GET /api/v1/portal/view", portalHandler.HandlePortalView)
 	mux.HandleFunc("POST /api/v1/portal/retry", portalHandler.HandlePortalRetry)
 	mux.HandleFunc("GET /api/v1/portal/snippets", portalHandler.HandlePortalSnippets)
+
+	// Built-in Mock Receiver & Chaos Simulator
+	mux.HandleFunc("POST /api/v1/mock-receiver", mockReceiver.HandleReceive)
+	mux.HandleFunc("GET /api/v1/mock-receiver", mockReceiver.HandleReceive)
+	mux.HandleFunc("GET /api/v1/mock-receiver/history", mockReceiver.HandleHistory)
+	mux.HandleFunc("POST /api/v1/mock-receiver/clear", mockReceiver.HandleClear)
+
+	// Interactive Signature Debugger
+	mux.HandleFunc("POST /api/v1/verifier/debug", api.HandleDebugVerifier)
 
 	// Embedded UI / SPA routes
 	mux.Handle("/", SPAHandler())

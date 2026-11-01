@@ -1,6 +1,6 @@
 import React from 'react';
 import { Delivery, DeliveryStatus, Endpoint } from '../types';
-import { CheckCircle2, AlertCircle, Clock, RotateCw, ExternalLink, Search, RefreshCw, Zap } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, RotateCw, ExternalLink, Search, RefreshCw, Zap, Download } from 'lucide-react';
 
 interface DeliveryLogTableProps {
   deliveries: Delivery[];
@@ -82,6 +82,16 @@ export const DeliveryLogTable: React.FC<DeliveryLogTableProps> = ({
     }
   };
 
+  const handleExport = (format: 'csv' | 'json') => {
+    const params = new URLSearchParams();
+    params.set('format', format);
+    if (selectedStatus) params.set('status', selectedStatus);
+    if (selectedEndpoint) params.set('endpoint_id', selectedEndpoint);
+    if (searchQuery.trim()) params.set('search', searchQuery.trim());
+
+    window.open(`/api/v1/deliveries/export?${params.toString()}`, '_blank');
+  };
+
   return (
     <div className="space-y-4">
       {/* Controls Bar */}
@@ -103,8 +113,8 @@ export const DeliveryLogTable: React.FC<DeliveryLogTableProps> = ({
           ))}
         </div>
 
-        {/* Search & Endpoint Filter */}
-        <div className="flex items-center space-x-2">
+        {/* Search & Endpoint Filter & Export */}
+        <div className="flex items-center space-x-2 flex-wrap gap-y-2">
           {/* Endpoint Filter */}
           <select
             value={selectedEndpoint}
@@ -120,7 +130,7 @@ export const DeliveryLogTable: React.FC<DeliveryLogTableProps> = ({
           </select>
 
           {/* Search box */}
-          <div className="relative flex-1 sm:w-64">
+          <div className="relative flex-1 sm:w-56">
             <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -129,6 +139,26 @@ export const DeliveryLogTable: React.FC<DeliveryLogTableProps> = ({
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-neutral-700"
             />
+          </div>
+
+          {/* Export Dropdown */}
+          <div className="flex items-center space-x-1 bg-neutral-950 border border-neutral-800 rounded-lg p-0.5 text-xs">
+            <button
+              onClick={() => handleExport('csv')}
+              className="px-2 py-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded flex items-center space-x-1"
+              title="Export filtered deliveries as CSV"
+            >
+              <Download className="w-3 h-3 text-emerald-400" />
+              <span>CSV</span>
+            </button>
+            <button
+              onClick={() => handleExport('json')}
+              className="px-2 py-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded flex items-center space-x-1"
+              title="Export filtered deliveries as JSON"
+            >
+              <Download className="w-3 h-3 text-cyan-400" />
+              <span>JSON</span>
+            </button>
           </div>
         </div>
       </div>

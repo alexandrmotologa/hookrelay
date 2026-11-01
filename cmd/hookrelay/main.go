@@ -80,6 +80,7 @@ func runServe(args []string) {
 	workers := fs.Int("workers", 20, "Number of concurrent delivery workers")
 	allowPrivate := fs.Bool("allow-private-ips", false, "Allow deliveries to private/localhost addresses")
 	portalSecret := fs.String("portal-secret", "hookrelay_portal_internal_secret_default_key_2026", "Key for customer portal tokens")
+	alertWebhook := fs.String("alert-webhook-url", "", "URL to POST alert webhooks when circuit breaker trips")
 
 	_ = fs.Parse(args)
 
@@ -95,6 +96,7 @@ func runServe(args []string) {
 	engineCfg := queue.DefaultEngineConfig()
 	engineCfg.Workers = *workers
 	engineCfg.AllowPrivateIPs = *allowPrivate
+	engineCfg.AlertWebhookURL = *alertWebhook
 
 	engine := queue.NewEngine(store, engineCfg)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -25,21 +25,23 @@ const (
 
 // Endpoint represents a registered customer destination.
 type Endpoint struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	URL                 string         `json:"url"`
-	Secret              string         `json:"secret"`
-	EventTypes          []string       `json:"event_types"`
-	RateLimit           int            `json:"rate_limit"`
-	Status              EndpointStatus `json:"status"`
-	ConsecutiveFailures int            `json:"consecutive_failures"`
-	TrippedAt           *time.Time     `json:"tripped_at,omitempty"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	URL                 string            `json:"url"`
+	Secret              string            `json:"secret"`
+	PreviousSecret      string            `json:"previous_secret,omitempty"`
+	SecretRotatedAt     *time.Time        `json:"secret_rotated_at,omitempty"`
+	EventTypes          []string          `json:"event_types"`
+	CustomHeaders       map[string]string `json:"custom_headers,omitempty"`
+	RateLimit           int               `json:"rate_limit"`
+	Status              EndpointStatus    `json:"status"`
+	ConsecutiveFailures int               `json:"consecutive_failures"`
+	TrippedAt           *time.Time        `json:"tripped_at,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
 // MatchesEvent returns true if the endpoint is subscribed to the given event type.
-// Supports exact match ("payment.succeeded") and wildcard match ("*", "payment.*").
 func (e *Endpoint) MatchesEvent(eventType string) bool {
 	if len(e.EventTypes) == 0 {
 		return true // Default: subscribe to all if empty
@@ -136,4 +138,23 @@ func DecodeEventTypes(data string) []string {
 	}
 	_ = json.Unmarshal([]byte(data), &types)
 	return types
+}
+
+// Helper to serialize custom headers to JSON string.
+func EncodeCustomHeaders(headers map[string]string) string {
+	if len(headers) == 0 {
+		return "{}"
+	}
+	bytes, _ := json.Marshal(headers)
+	return string(bytes)
+}
+
+// Helper to deserialize custom headers from JSON string.
+func DecodeCustomHeaders(data string) map[string]string {
+	res := make(map[string]string)
+	if data == "" || data == "null" || data == "{}" {
+		return res
+	}
+	_ = json.Unmarshal([]byte(data), &res)
+	return res
 }

@@ -11,10 +11,17 @@ HookRelay replaces commercial webhook delivery vendors like Svix or Hookdeck. Ap
 - **Fast Intake API**: Ingests events in under 2ms with optional `Idempotency-Key` deduplication.
 - **Fan-Out & Targeted Delivery**: Publish directly to a specific endpoint or fan out to all subscribers matching an event type pattern.
 - **Standard Webhooks Signatures**: Signs every outbound request with `webhook-id`, `webhook-timestamp`, and `webhook-signature` using HMAC-SHA256.
+- **Dual Secret Rotation with 24h Grace Period**: Outbound requests carry both new and previous signatures during rotation (`v1,<new> v1,<old>`) to eliminate customer downtime.
+- **Token Bucket Rate Limiting per Endpoint**: Paces outbound deliveries according to each customer endpoint's configured capacity.
+- **Adaptive Retry-After Handling**: Respects HTTP 429 response headers and schedules the next attempt at the recipient's requested time.
 - **Durable Exponential Retries**: 5-step schedule (5s, 1m, 15m, 1h, 24h) with randomized jitter (+/-15%) backed by SQLite in WAL mode.
 - **Per-Endpoint Circuit Breakers**: Automatically pauses delivery after 50 consecutive failures to prevent downstream flooding and resource exhaustion.
+- **Circuit Breaker Alert Webhooks**: Dispatches system alert webhooks to an ops URL whenever a customer endpoint trips.
 - **SSRF Network Protection**: Blocks requests to loopback, private RFC 1918 subnets, and cloud instance metadata addresses. Rejects HTTP redirects by default.
-- **Delivery Log Inspection**: Full request headers, request payload, response status, duration, and response body preview stored for auditing.
+- **Built-in Mock Receiver & Chaos Simulator**: Built-in endpoint (`/api/v1/mock-receiver`) with configurable behaviors (200 OK, 500 Error, 429 Rate Limit, 504 Timeout, Chaos mode) for instant local testing.
+- **Interactive Signature Debugger**: In-browser diagnostic tool to test and debug cryptographic signatures and timestamp drift.
+- **Server-Sent Events (SSE) Live Feed**: Sub-10ms delivery stream push to the web studio via `/api/v1/events/stream`.
+- **Audit Log Export (CSV & JSON)**: One-click export of delivery history for compliance and dispute resolution.
 - **Customer Self-Serve Portal**: Scoped URL tokens allow end customers to review their delivery status, view code examples for signature verification, and trigger manual retries.
 - **Single-Binary Distribution**: Written in Go with pure Go SQLite (`modernc.org/sqlite`) and an embedded React 19 web studio. No external database or runtime required.
 
@@ -33,7 +40,7 @@ HookRelay replaces commercial webhook delivery vendors like Svix or Hookdeck. Ap
 |    Internal Ingestion API       |                 |    HMAC-SHA256 Signing Engine |
 |  * POST /api/v1/publish         |                 |  * Standard Webhooks Spec     |
 |  * Sub-2ms Non-Blocking Intake  |                 |  * Timestamp Replay Defense   |
-|  * Topic & Tenant Routing       |                 |  * Shared Secret Rotation     |
+|  * Topic & Tenant Routing       |                 |  * Dual Secret Grace Period   |
 |  * Idempotency Key De-dupe      |                 |  * Multi-language Verifiers   |
 +-------+-------------------------+                 +-----------------------+-------+
         |                                                                   |
@@ -43,7 +50,8 @@ HookRelay replaces commercial webhook delivery vendors like Svix or Hookdeck. Ap
                         |    Durable Retry State Machine    |
                         |  * Exponential Backoff & Jitter   |
                         |  * Schedule: 5s, 1m, 15m, 1h, 24h |
-                        |  * Circuit Breaker per Endpoint   |
+                        |  * Token Bucket Rate Limiting     |
+                        |  * Circuit Breaker & Ops Alerts   |
                         |  * Dead Letter Queue (DLQ)        |
                         +-----------------+-----------------+
                                           |
@@ -52,15 +60,17 @@ HookRelay replaces commercial webhook delivery vendors like Svix or Hookdeck. Ap
                         |  * Go Goroutine Worker Pool       |
                         |  * Strict 5s Connect/Read Timeout |
                         |  * Anti-SSRF Private IP Blocker   |
+                        |  * Custom Headers per Endpoint    |
                         |  * Full Payload & Response Record |
                         +-----------------+-----------------+
                                           |
                         +-----------------v-----------------+
                         |   Interactive Web Studio & Portal |
-                        |  * Admin Mission Control (:9770)  |
+                        |  * Real-Time SSE Stream (:9770)   |
                         |  * Customer Self-Serve Portal     |
-                        |  * 1-Click Manual Event Replay    |
-                        |  * Test Webhook Simulator         |
+                        |  * Built-in Mock Receiver & Chaos |
+                        |  * Interactive Signature Debugger |
+                        |  * CSV / JSON Audit Log Export    |
                         +-----------------------------------+
 ```
 
@@ -99,8 +109,12 @@ curl -X POST http://localhost:9770/api/v1/endpoints \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Acme Payments Webhook",
-    "url": "https://webhook.site/test-receiver",
-    "event_types": ["payment.succeeded", "invoice.created"]
+    "url": "https://api.example.com/webhooks",
+    "event_types": ["payment.succeeded", "invoice.created"],
+    "custom_headers": {
+      "Authorization": "Bearer secret_api_token"
+    },
+    "rate_limit": 50
   }'
 ```
 
@@ -109,7 +123,7 @@ Returns:
 {
   "id": "ep_01jh823...",
   "name": "Acme Payments Webhook",
-  "url": "https://webhook.site/test-receiver",
+  "url": "https://api.example.com/webhooks",
   "secret": "whsec_x8F2...",
   "status": "ACTIVE"
 }
@@ -134,21 +148,7 @@ curl -X POST http://localhost:9770/api/v1/publish \
 HookRelay immediately schedules the delivery, signs the payload using HMAC-SHA256, and dispatches the request with the headers:
 - `webhook-id`: Message ID
 - `webhook-timestamp`: Unix timestamp in seconds
-- `webhook-signature`: `v1,<signature>`
-
----
-
-## Retry Policy & Circuit Breakers
-
-When a customer endpoint returns a non-2xx status or times out after 5 seconds:
-1. The delivery is scheduled for retry using exponential backoff with randomized jitter (+/-15%):
-   - Attempt 1: 5 seconds
-   - Attempt 2: 1 minute
-   - Attempt 3: 15 minutes
-   - Attempt 4: 1 hour
-   - Attempt 5: 24 hours
-2. If attempt 5 fails, the delivery transitions to `FAILED` status and moves to the Dead Letter Queue.
-3. If an endpoint accumulates 50 consecutive delivery failures, its circuit breaker trips to `SUSPENDED`. New webhooks to this endpoint are halted until the cooldown passes or an operator resets the breaker.
+- `webhook-signature`: `v1,<signature>` (or dual signatures during secret rotation)
 
 ---
 

@@ -21,14 +21,13 @@ type SQLiteStorage struct {
 
 // NewSQLiteStorage initializes SQLite database with WAL configuration.
 func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
-	// Enable WAL mode and busy timeout via connection string
 	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)", dbPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
-	db.SetMaxOpenConns(1) // SQLite works best with 1 writer or shared pool
+	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
@@ -42,8 +41,16 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 }
 
 func (s *SQLiteStorage) migrate() error {
-	_, err := s.db.Exec(initSQL)
-	return err
+	if _, err := s.db.Exec(initSQL); err != nil {
+		return err
+	}
+
+	// Idempotent column additions for existing databases
+	_, _ = s.db.Exec(`ALTER TABLE endpoints ADD COLUMN previous_secret TEXT;`)
+	_, _ = s.db.Exec(`ALTER TABLE endpoints ADD COLUMN secret_rotated_at DATETIME;`)
+	_, _ = s.db.Exec(`ALTER TABLE endpoints ADD COLUMN custom_headers TEXT NOT NULL DEFAULT '{}';`)
+
+	return nil
 }
 
 func (s *SQLiteStorage) Close() error {
@@ -69,43 +76,55 @@ func (s *SQLiteStorage) CreateEndpoint(ctx context.Context, ep *Endpoint) error 
 	}
 
 	eventTypesJSON := EncodeEventTypes(ep.EventTypes)
+	customHeadersJSON := EncodeCustomHeaders(ep.CustomHeaders)
 
 	query := `
-		INSERT INTO endpoints (id, name, url, secret, event_types, rate_limit, status, consecutive_failures, tripped_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO endpoints (
+			id, name, url, secret, previous_secret, secret_rotated_at,
+			event_types, custom_headers, rate_limit, status,
+			consecutive_failures, tripped_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := s.db.ExecContext(ctx, query,
-		ep.ID, ep.Name, ep.URL, ep.Secret, eventTypesJSON, ep.RateLimit,
-		string(ep.Status), ep.ConsecutiveFailures, ep.TrippedAt, ep.CreatedAt, ep.UpdatedAt,
+		ep.ID, ep.Name, ep.URL, ep.Secret, ep.PreviousSecret, ep.SecretRotatedAt,
+		eventTypesJSON, customHeadersJSON, ep.RateLimit, string(ep.Status),
+		ep.ConsecutiveFailures, ep.TrippedAt, ep.CreatedAt, ep.UpdatedAt,
 	)
 	return err
 }
 
 func (s *SQLiteStorage) GetEndpoint(ctx context.Context, id string) (*Endpoint, error) {
 	query := `
-		SELECT id, name, url, secret, event_types, rate_limit, status, consecutive_failures, tripped_at, created_at, updated_at
+		SELECT id, name, url, secret, COALESCE(previous_secret, ''), secret_rotated_at,
+		       event_types, COALESCE(custom_headers, '{}'), rate_limit, status,
+		       consecutive_failures, tripped_at, created_at, updated_at
 		FROM endpoints WHERE id = ?
 	`
 	row := s.db.QueryRowContext(ctx, query, id)
 
 	var ep Endpoint
 	var eventTypesJSON string
+	var customHeadersJSON string
 	var statusStr string
 	err := row.Scan(
-		&ep.ID, &ep.Name, &ep.URL, &ep.Secret, &eventTypesJSON, &ep.RateLimit,
-		&statusStr, &ep.ConsecutiveFailures, &ep.TrippedAt, &ep.CreatedAt, &ep.UpdatedAt,
+		&ep.ID, &ep.Name, &ep.URL, &ep.Secret, &ep.PreviousSecret, &ep.SecretRotatedAt,
+		&eventTypesJSON, &customHeadersJSON, &ep.RateLimit, &statusStr,
+		&ep.ConsecutiveFailures, &ep.TrippedAt, &ep.CreatedAt, &ep.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	ep.Status = EndpointStatus(statusStr)
 	ep.EventTypes = DecodeEventTypes(eventTypesJSON)
+	ep.CustomHeaders = DecodeCustomHeaders(customHeadersJSON)
 	return &ep, nil
 }
 
 func (s *SQLiteStorage) ListEndpoints(ctx context.Context) ([]*Endpoint, error) {
 	query := `
-		SELECT id, name, url, secret, event_types, rate_limit, status, consecutive_failures, tripped_at, created_at, updated_at
+		SELECT id, name, url, secret, COALESCE(previous_secret, ''), secret_rotated_at,
+		       event_types, COALESCE(custom_headers, '{}'), rate_limit, status,
+		       consecutive_failures, tripped_at, created_at, updated_at
 		FROM endpoints ORDER BY created_at DESC
 	`
 	rows, err := s.db.QueryContext(ctx, query)
@@ -118,16 +137,19 @@ func (s *SQLiteStorage) ListEndpoints(ctx context.Context) ([]*Endpoint, error) 
 	for rows.Next() {
 		var ep Endpoint
 		var eventTypesJSON string
+		var customHeadersJSON string
 		var statusStr string
 		err := rows.Scan(
-			&ep.ID, &ep.Name, &ep.URL, &ep.Secret, &eventTypesJSON, &ep.RateLimit,
-			&statusStr, &ep.ConsecutiveFailures, &ep.TrippedAt, &ep.CreatedAt, &ep.UpdatedAt,
+			&ep.ID, &ep.Name, &ep.URL, &ep.Secret, &ep.PreviousSecret, &ep.SecretRotatedAt,
+			&eventTypesJSON, &customHeadersJSON, &ep.RateLimit, &statusStr,
+			&ep.ConsecutiveFailures, &ep.TrippedAt, &ep.CreatedAt, &ep.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
 		ep.Status = EndpointStatus(statusStr)
 		ep.EventTypes = DecodeEventTypes(eventTypesJSON)
+		ep.CustomHeaders = DecodeCustomHeaders(customHeadersJSON)
 		result = append(result, &ep)
 	}
 	return result, rows.Err()
@@ -136,15 +158,18 @@ func (s *SQLiteStorage) ListEndpoints(ctx context.Context) ([]*Endpoint, error) 
 func (s *SQLiteStorage) UpdateEndpoint(ctx context.Context, ep *Endpoint) error {
 	ep.UpdatedAt = time.Now().UTC()
 	eventTypesJSON := EncodeEventTypes(ep.EventTypes)
+	customHeadersJSON := EncodeCustomHeaders(ep.CustomHeaders)
 
 	query := `
 		UPDATE endpoints
-		SET name = ?, url = ?, secret = ?, event_types = ?, rate_limit = ?, status = ?,
+		SET name = ?, url = ?, secret = ?, previous_secret = ?, secret_rotated_at = ?,
+		    event_types = ?, custom_headers = ?, rate_limit = ?, status = ?,
 		    consecutive_failures = ?, tripped_at = ?, updated_at = ?
 		WHERE id = ?
 	`
 	_, err := s.db.ExecContext(ctx, query,
-		ep.Name, ep.URL, ep.Secret, eventTypesJSON, ep.RateLimit, string(ep.Status),
+		ep.Name, ep.URL, ep.Secret, ep.PreviousSecret, ep.SecretRotatedAt,
+		eventTypesJSON, customHeadersJSON, ep.RateLimit, string(ep.Status),
 		ep.ConsecutiveFailures, ep.TrippedAt, ep.UpdatedAt, ep.ID,
 	)
 	return err
@@ -438,6 +463,8 @@ func (s *SQLiteStorage) GetPendingDeliveries(ctx context.Context, limit int) ([]
 	if limit <= 0 {
 		limit = 50
 	}
+	// Only fetch orphaned pending deliveries older than 5 seconds to prevent race with in-memory queue
+	orphanThreshold := time.Now().UTC().Add(-5 * time.Second)
 	query := `
 		SELECT d.id, d.message_id, d.endpoint_id, d.status, d.attempt_number, d.max_attempts,
 		       d.http_status, d.duration_ms, d.request_headers, d.response_headers,
@@ -446,11 +473,11 @@ func (s *SQLiteStorage) GetPendingDeliveries(ctx context.Context, limit int) ([]
 		FROM deliveries d
 		JOIN endpoints e ON d.endpoint_id = e.id
 		JOIN messages m ON d.message_id = m.id
-		WHERE d.status = 'PENDING'
+		WHERE d.status = 'PENDING' AND d.created_at <= ?
 		ORDER BY d.created_at ASC
 		LIMIT ?
 	`
-	rows, err := s.db.QueryContext(ctx, query, limit)
+	rows, err := s.db.QueryContext(ctx, query, orphanThreshold, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +550,6 @@ func (s *SQLiteStorage) ReplayDelivery(ctx context.Context, deliveryID string) (
 		return nil, err
 	}
 
-	// Create a new delivery attempt clone in PENDING state
 	newD := &Delivery{
 		ID:            "del_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16],
 		MessageID:     d.MessageID,
@@ -593,10 +619,8 @@ func (s *SQLiteStorage) ReplayAllDLQ(ctx context.Context) (int, error) {
 func (s *SQLiteStorage) GetStats(ctx context.Context) (*StatsSummary, error) {
 	stats := &StatsSummary{}
 
-	// Messages count
 	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM messages").Scan(&stats.TotalMessages)
 
-	// Deliveries status breakdown
 	query := `
 		SELECT status, COUNT(*), COALESCE(AVG(duration_ms), 0)
 		FROM deliveries
@@ -637,7 +661,6 @@ func (s *SQLiteStorage) GetStats(ctx context.Context) (*StatsSummary, error) {
 		}
 	}
 
-	// Endpoints count
 	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM endpoints WHERE status = 'ACTIVE'").Scan(&stats.ActiveEndpoints)
 	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM endpoints WHERE status = 'SUSPENDED'").Scan(&stats.SuspendedEndpoints)
 

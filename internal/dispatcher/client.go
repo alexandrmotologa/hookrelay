@@ -19,9 +19,10 @@ type HardenedClient struct {
 }
 
 type DeliveryRequest struct {
-	EndpointURL string
-	Headers     map[string]string
-	Payload     []byte
+	EndpointURL   string
+	Headers       map[string]string
+	CustomHeaders map[string]string
+	Payload       []byte
 }
 
 type DeliveryResult struct {
@@ -31,6 +32,7 @@ type DeliveryResult struct {
 	ResponseHeadersJSON string
 	ResponseBody        string
 	ErrorMessage        string
+	RetryAfterHeader    string
 	Success             bool
 }
 
@@ -107,7 +109,12 @@ func (c *HardenedClient) Execute(ctx context.Context, req *DeliveryRequest) (*De
 		return result, nil
 	}
 
-	// Apply headers
+	// Apply custom headers first (e.g. Authorization, X-API-Key)
+	for k, v := range req.CustomHeaders {
+		httpReq.Header.Set(k, v)
+	}
+
+	// Apply cryptographic headers (these overwrite any conflicting custom headers)
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
 	}
@@ -127,6 +134,7 @@ func (c *HardenedClient) Execute(ctx context.Context, req *DeliveryRequest) (*De
 	defer resp.Body.Close()
 
 	result.StatusCode = resp.StatusCode
+	result.RetryAfterHeader = resp.Header.Get("Retry-After")
 
 	// Extract response headers
 	respHeadersMap := make(map[string]string)

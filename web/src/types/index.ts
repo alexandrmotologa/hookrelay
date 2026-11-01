@@ -6,7 +6,10 @@ export interface Endpoint {
   name: string;
   url: string;
   secret: string;
+  previous_secret?: string;
+  secret_rotated_at?: string | null;
   event_types: string[];
+  custom_headers?: Record<string, string>;
   rate_limit: number;
   status: EndpointStatus;
   consecutive_failures: number;
@@ -48,4 +51,18 @@ export interface StatsSummary {
   avg_duration_ms: number;
   active_endpoints: number;
   suspended_endpoints: number;
+}
+
+export interface MockReceivedItem {
+  id: string;
+  received_at: string;
+  method: string;
+  headers: Record<string, string>;
+  body: string;
+  webhook_id: string;
+  webhook_timestamp: string;
+  webhook_signature: string;
+  signature_valid: boolean;
+  simulated_mode: string;
+  status_code: number;
 }

@@ -1,17 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Delivery, Endpoint, StatsSummary } from './types';
-import { Header } from './components/Header';
+import { Header, ActiveTab } from './components/Header';
 import { DeliveryLogTable } from './components/DeliveryLogTable';
 import { EndpointManager } from './components/EndpointManager';
 import { DLQView } from './components/DLQView';
 import { TestSimulator } from './components/TestSimulator';
 import { CustomerPortal } from './components/CustomerPortal';
 import { MessagePayloadModal } from './components/MessagePayloadModal';
+import { MockReceiverPanel } from './components/MockReceiverPanel';
+import { SignatureDebugger } from './components/SignatureDebugger';
 import { CheckCircle2, Clock, AlertTriangle, Layers, Activity, ShieldAlert, ArrowUpRight } from 'lucide-react';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'deliveries' | 'endpoints' | 'dlq' | 'simulator' | 'portal'>('deliveries');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('deliveries');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [sseConnected, setSseConnected] = useState(false);
 
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -61,16 +64,60 @@ export function App() {
         setDeliveries(delData.items || []);
       }
     } catch {
-      // ignore network errors during background poll
+      // ignore network errors
     }
   }, [selectedStatus, selectedEndpoint, searchQuery]);
 
+  // Connect Server-Sent Events (SSE) for instant live updates (<10ms)
   useEffect(() => {
     fetchData();
-    if (!autoRefresh) return;
 
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/v1/events/stream');
+
+      eventSource.addEventListener('connected', () => {
+        setSseConnected(true);
+      });
+
+      eventSource.addEventListener('delivery', (e) => {
+        try {
+          const updatedDel: Delivery = JSON.parse(e.data);
+          setDeliveries((prev) => {
+            const idx = prev.findIndex((d) => d.id === updatedDel.id);
+            if (idx >= 0) {
+              const clone = [...prev];
+              clone[idx] = updatedDel;
+              return clone;
+            } else {
+              return [updatedDel, ...prev];
+            }
+          });
+          // Refresh stats
+          fetch('/api/v1/stats').then((r) => r.json()).then(setStats).catch(() => {});
+        } catch {
+          // ignore
+        }
+      });
+
+      eventSource.onerror = () => {
+        setSseConnected(false);
+      };
+    } catch {
+      setSseConnected(false);
+    }
+
+    // Interval poller as resilient fallback
+    const interval = setInterval(() => {
+      if (autoRefresh) {
+        fetchData();
+      }
+    }, 4000);
+
+    return () => {
+      if (eventSource) eventSource.close();
+      clearInterval(interval);
+    };
   }, [fetchData, autoRefresh]);
 
   const handleManualRetry = async (deliveryId: string) => {
@@ -79,7 +126,6 @@ export function App() {
       if (res.ok) {
         fetchData();
         if (inspectDelivery && inspectDelivery.id === deliveryId) {
-          // reload inspection
           const dRes = await fetch(`/api/v1/deliveries/${deliveryId}`);
           if (dRes.ok) {
             setInspectDelivery(await dRes.json());
@@ -104,6 +150,7 @@ export function App() {
         setAutoRefresh={setAutoRefresh}
         onRefresh={fetchData}
         onOpenSimulator={() => setShowSimulator(true)}
+        sseConnected={sseConnected}
       />
 
       {/* Main Content Area */}
@@ -228,6 +275,16 @@ export function App() {
             onRetry={handleManualRetry}
             onRefresh={fetchData}
           />
+        )}
+
+        {activeTab === 'mock' && (
+          <MockReceiverPanel
+            onEndpointCreated={fetchData}
+          />
+        )}
+
+        {activeTab === 'debugger' && (
+          <SignatureDebugger />
         )}
 
         {activeTab === 'portal' && (

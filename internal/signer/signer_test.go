@@ -52,6 +52,40 @@ func TestSignAndVerify(t *testing.T) {
 	}
 }
 
+func TestDualSignaturesWithGracePeriod(t *testing.T) {
+	oldSecret, _ := GenerateSecret()
+	newSecret, _ := GenerateSecret()
+
+	rotatedAt := time.Now().UTC().Add(-2 * time.Hour) // rotated 2 hours ago
+	now := time.Now().UTC()
+	msgID := "msg_dual_test"
+	payload := []byte(`{"order_id":"123"}`)
+
+	headers, err := BuildDualHeaders(msgID, now, payload, newSecret, oldSecret, &rotatedAt, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("failed to build dual headers: %v", err)
+	}
+
+	sigHeader := headers["webhook-signature"]
+	tsHeader := headers["webhook-timestamp"]
+
+	// The header should contain 2 signatures separated by space
+	sigs := strings.Split(sigHeader, " ")
+	if len(sigs) != 2 {
+		t.Fatalf("expected 2 signatures in header, got %d: %s", len(sigs), sigHeader)
+	}
+
+	// Customer verifying with NEW secret -> PASS
+	if err := Verify(msgID, tsHeader, payload, sigHeader, newSecret, 300); err != nil {
+		t.Fatalf("expected verification with new secret to pass: %v", err)
+	}
+
+	// Customer still verifying with OLD secret -> PASS (grace period active)
+	if err := Verify(msgID, tsHeader, payload, sigHeader, oldSecret, 300); err != nil {
+		t.Fatalf("expected verification with old secret to pass: %v", err)
+	}
+}
+
 func TestGenerateSnippets(t *testing.T) {
 	secret := "whsec_test123"
 	nodeCode := GenerateSnippet("node", secret)
